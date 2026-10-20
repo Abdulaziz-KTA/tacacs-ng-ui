@@ -1,6 +1,7 @@
 # TACACS-NG-UI isolated staging deployment
 # Production TACACS+ at 10.201.0.63:49 is not touched.
 x-backend-env: &backend-env
+  PROJECT_NAME: "TACACS-NG-UI"
   DOMAIN: "10.201.0.78"
   FRONTEND_HOST: "http://10.201.0.78:8088"
   ENVIRONMENT: "staging"
