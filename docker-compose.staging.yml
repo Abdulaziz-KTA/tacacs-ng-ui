@@ -1,0 +1,42 @@
+    image: tacacs-ng-ui-staging-backend:local
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      prestart:
+        condition: service_completed_successfully
+    volumes:
+      - staging_tacacs_config:/app/tacacs_config
+      - staging_tacacs_logs:/var/log/tacacs
+    networks:
+      - staging_internal
+    # Deliberately no published TCP/49 or TCP/8000.
+    # Backend can run its own test TACACS+ daemon only inside Docker.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+        NODE_ENV: production
+    image: tacacs-ng-ui-staging-frontend:local
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "10.201.0.78:8088:80/tcp"
+    networks:
+      - staging_internal
+
+networks:
+  staging_internal:
+    driver: bridge
+
+volumes:
+  staging_db:
+  staging_tacacs_config:
+  staging_tacacs_logs:
