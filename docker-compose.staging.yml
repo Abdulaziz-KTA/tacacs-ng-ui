@@ -1,7 +1,70 @@
+# TACACS-NG-UI isolated staging deployment
+# Production TACACS+ at 10.201.0.63:49 is not touched.
+x-backend-env: &backend-env
+  DOMAIN: "10.201.0.78"
+  FRONTEND_HOST: "http://10.201.0.78:8088"
+  ENVIRONMENT: "staging"
+  BACKEND_CORS_ORIGINS: "[]"
+  SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY}"
+  FIRST_SUPERUSER: "${FIRST_SUPERUSER:-admin@example.com}"
+  FIRST_SUPERUSER_PASSWORD: "${FIRST_SUPERUSER_PASSWORD:?Set FIRST_SUPERUSER_PASSWORD}"
+  POSTGRES_SERVER: "db"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "${POSTGRES_DB:-app}"
+  POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+  SMTP_HOST: ""
+  SMTP_USER: ""
+  SMTP_PASSWORD: ""
+  EMAILS_FROM_EMAIL: "admin@example.com"
+  SENTRY_DSN: ""
+  USERS_OPEN_REGISTRATION: "false"
+  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
+  TZ: "Asia/Riyadh"
+  MCP_ENABLED: "false"
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:-app}"
+    volumes:
+      - staging_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - staging_internal
+
+  prestart:
+    build:
+      context: ./backend
+    image: tacacs-ng-ui-staging-backend:local
+    command: ["bash", "scripts/prestart.sh"]
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - staging_internal
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
     image: tacacs-ng-ui-staging-backend:local
     restart: unless-stopped
     environment: *backend-env
     depends_on:
+      db:
+        condition: service_healthy
       prestart:
         condition: service_completed_successfully
     volumes:
@@ -9,13 +72,12 @@
       - staging_tacacs_logs:/var/log/tacacs
     networks:
       - staging_internal
-    # Deliberately no published TCP/49 or TCP/8000.
-    # Backend can run its own test TACACS+ daemon only inside Docker.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
       interval: 10s
       timeout: 5s
       retries: 5
+    # No port 49 or 8000 published.
 
   frontend:
     build:
@@ -26,7 +88,8 @@
     image: tacacs-ng-ui-staging-frontend:local
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     ports:
       - "10.201.0.78:8088:80/tcp"
     networks:
