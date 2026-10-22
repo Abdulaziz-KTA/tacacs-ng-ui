@@ -1,6 +1,4 @@
-# Unified TACACS-NG-UI staging deployment.
-# Preserve production tac_plus-ng on 10.201.0.63:49 until cutover.
-# Requires source folders backend/ and frontend/ from upstream repository.
+# TACACS-NG-UI integrated staging, production tac_plus-ng stays untouched
 x-backend-env: &backend-env
   PROJECT_NAME: "TACACS-NG-UI"
   DOMAIN: "10.201.0.78"
@@ -10,18 +8,18 @@ x-backend-env: &backend-env
   SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in Portainer}"
   FIRST_SUPERUSER: "${FIRST_SUPERUSER:-admin@example.com}"
   FIRST_SUPERUSER_PASSWORD: "${FIRST_SUPERUSER_PASSWORD:?Set FIRST_SUPERUSER_PASSWORD in Portainer}"
-  POSTGRES_SERVER: "db"
+  POSTGRES_SERVER: db
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "${POSTGRES_DB:-app}"
   POSTGRES_USER: "${POSTGRES_USER:-postgres}"
   POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Portainer}"
-  USERS_OPEN_REGISTRATION: "false"
-  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
   SMTP_HOST: ""
   SMTP_USER: ""
   SMTP_PASSWORD: ""
   EMAILS_FROM_EMAIL: "admin@example.com"
   SENTRY_DSN: ""
+  USERS_OPEN_REGISTRATION: "false"
+  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
   TZ: "Asia/Riyadh"
   NODE_ROLE: "primary"
   MCP_ENABLED: "false"
@@ -36,60 +34,65 @@ services:
       POSTGRES_DB: "${POSTGRES_DB:-app}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Portainer}"
     volumes:
-      - staging_db:/var/lib/postgresql/data/pgdata
-    networks:
-      - staging_internal
+      - staging_db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - staging_internal
 
   prestart:
-    image: tacacs-ng-ui-unified-backend:local
+    image: tacacs-ng-ui-staging-backend:local
     build:
       context: ./backend
+    pull_policy: build
     command: ["bash", "scripts/prestart.sh"]
     environment: *backend-env
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
     networks:
       - staging_internal
-    restart: "no"
 
   backend:
-    image: tacacs-ng-ui-unified-backend:local
+    image: tacacs-ng-ui-staging-backend:local
     build:
       context: ./backend
+    pull_policy: build
     restart: unless-stopped
     environment: *backend-env
     depends_on:
+      db:
+        condition: service_healthy
       prestart:
         condition: service_completed_successfully
-    # TEST ONLY: host port 4949 goes to internal TACACS+ port 49.
-    # No overlap with existing production endpoint 10.201.0.63:49.
-    ports:
-      - "10.201.0.78:4949:49/tcp"
     volumes:
       - staging_tacacs_config:/app/tacacs_config
       - staging_tacacs_logs:/var/log/tacacs
-    networks:
-      - staging_internal
+    ports:
+      # Test-only TACACS+, does not occupy production 10.201.0.63:49
+      - "10.201.0.78:4949:49/tcp"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    networks:
+      - staging_internal
 
   frontend:
-    image: tacacs-ng-ui-unified-frontend:local
+    image: tacacs-ng-ui-staging-frontend:local
     build:
       context: ./frontend
       args:
         VITE_API_URL: ""
         NODE_ENV: production
+    pull_policy: build
     restart: unless-stopped
     depends_on:
       backend:
