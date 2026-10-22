@@ -1,27 +1,29 @@
-# TACACS-NG-UI isolated staging deployment
-# Production TACACS+ at 10.201.0.63:49 is not touched.
+# Unified TACACS-NG-UI staging deployment.
+# Preserve production tac_plus-ng on 10.201.0.63:49 until cutover.
+# Requires source folders backend/ and frontend/ from upstream repository.
 x-backend-env: &backend-env
   PROJECT_NAME: "TACACS-NG-UI"
   DOMAIN: "10.201.0.78"
   FRONTEND_HOST: "http://10.201.0.78:8088"
   ENVIRONMENT: "staging"
   BACKEND_CORS_ORIGINS: "[]"
-  SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY}"
+  SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in Portainer}"
   FIRST_SUPERUSER: "${FIRST_SUPERUSER:-admin@example.com}"
-  FIRST_SUPERUSER_PASSWORD: "${FIRST_SUPERUSER_PASSWORD:?Set FIRST_SUPERUSER_PASSWORD}"
+  FIRST_SUPERUSER_PASSWORD: "${FIRST_SUPERUSER_PASSWORD:?Set FIRST_SUPERUSER_PASSWORD in Portainer}"
   POSTGRES_SERVER: "db"
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "${POSTGRES_DB:-app}"
   POSTGRES_USER: "${POSTGRES_USER:-postgres}"
-  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Portainer}"
+  USERS_OPEN_REGISTRATION: "false"
+  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
   SMTP_HOST: ""
   SMTP_USER: ""
   SMTP_PASSWORD: ""
   EMAILS_FROM_EMAIL: "admin@example.com"
   SENTRY_DSN: ""
-  USERS_OPEN_REGISTRATION: "false"
-  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
   TZ: "Asia/Riyadh"
+  NODE_ROLE: "primary"
   MCP_ENABLED: "false"
 
 services:
@@ -31,23 +33,23 @@ services:
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
       POSTGRES_USER: "${POSTGRES_USER:-postgres}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
       POSTGRES_DB: "${POSTGRES_DB:-app}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Portainer}"
     volumes:
-      - staging_db:/var/lib/postgresql/data
+      - staging_db:/var/lib/postgresql/data/pgdata
+    networks:
+      - staging_internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 10s
       retries: 5
       start_period: 30s
-    networks:
-      - staging_internal
 
   prestart:
+    image: tacacs-ng-ui-unified-backend:local
     build:
       context: ./backend
-    image: tacacs-ng-ui-staging-backend:local
     command: ["bash", "scripts/prestart.sh"]
     environment: *backend-env
     depends_on:
@@ -58,16 +60,18 @@ services:
     restart: "no"
 
   backend:
+    image: tacacs-ng-ui-unified-backend:local
     build:
       context: ./backend
-    image: tacacs-ng-ui-staging-backend:local
     restart: unless-stopped
     environment: *backend-env
     depends_on:
-      db:
-        condition: service_healthy
       prestart:
         condition: service_completed_successfully
+    # TEST ONLY: host port 4949 goes to internal TACACS+ port 49.
+    # No overlap with existing production endpoint 10.201.0.63:49.
+    ports:
+      - "10.201.0.78:4949:49/tcp"
     volumes:
       - staging_tacacs_config:/app/tacacs_config
       - staging_tacacs_logs:/var/log/tacacs
@@ -78,19 +82,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # No port 49 or 8000 published.
 
   frontend:
+    image: tacacs-ng-ui-unified-frontend:local
     build:
       context: ./frontend
       args:
         VITE_API_URL: ""
         NODE_ENV: production
-    image: tacacs-ng-ui-staging-frontend:local
     restart: unless-stopped
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "10.201.0.78:8088:80/tcp"
     networks:
