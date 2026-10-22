@@ -1,104 +1,143 @@
-# TACACS-NG-UI integrated staging, production tac_plus-ng stays untouched
+
+# Unified TACACS-NG-UI
+# Host IP: 10.201.0.78
+# Web UI: 8088
+# TACACS+: 49
+
 x-backend-env: &backend-env
   PROJECT_NAME: "TACACS-NG-UI"
   DOMAIN: "10.201.0.78"
   FRONTEND_HOST: "http://10.201.0.78:8088"
   ENVIRONMENT: "staging"
   BACKEND_CORS_ORIGINS: "[]"
-  SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in Portainer}"
+
+  SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY}"
   FIRST_SUPERUSER: "${FIRST_SUPERUSER:-admin@example.com}"
-  FIRST_SUPERUSER_PASSWORD: "${FIRST_SUPERUSER_PASSWORD:?Set FIRST_SUPERUSER_PASSWORD in Portainer}"
+  FIRST_SUPERUSER_PASSWORD: "${FIRST_SUPERUSER_PASSWORD:?Set admin password}"
+
   POSTGRES_SERVER: db
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "${POSTGRES_DB:-app}"
   POSTGRES_USER: "${POSTGRES_USER:-postgres}"
-  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Portainer}"
+  POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set DB password}"
+
+  USERS_OPEN_REGISTRATION: "false"
+  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
+  NODE_ROLE: "primary"
+  MCP_ENABLED: "false"
+
   SMTP_HOST: ""
   SMTP_USER: ""
   SMTP_PASSWORD: ""
   EMAILS_FROM_EMAIL: "admin@example.com"
   SENTRY_DSN: ""
-  USERS_OPEN_REGISTRATION: "false"
-  TACACS_LOG_DIRECTORY: "/var/log/tacacs/"
   TZ: "Asia/Riyadh"
-  NODE_ROLE: "primary"
-  MCP_ENABLED: "false"
 
 services:
+
   db:
     image: postgres:18
     restart: unless-stopped
+
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
       POSTGRES_USER: "${POSTGRES_USER:-postgres}"
       POSTGRES_DB: "${POSTGRES_DB:-app}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Portainer}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set DB password}"
+
     volumes:
-      - staging_db:/var/lib/postgresql/data
+      - staging_db:/var/lib/postgresql/data/pgdata
+
+    networks:
+      - staging_internal
+
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
       interval: 10s
       timeout: 10s
       retries: 5
       start_period: 30s
-    networks:
-      - staging_internal
 
   prestart:
-    image: tacacs-ng-ui-staging-backend:local
+    image: tacacs-ng-ui-unified-backend:local
+
     build:
       context: ./backend
+
     pull_policy: build
-    command: ["bash", "scripts/prestart.sh"]
+
+    command:
+      - bash
+      - scripts/prestart.sh
+
     environment: *backend-env
+
     depends_on:
       db:
         condition: service_healthy
+
     restart: "no"
+
     networks:
       - staging_internal
 
   backend:
-    image: tacacs-ng-ui-staging-backend:local
+    image: tacacs-ng-ui-unified-backend:local
+
     build:
       context: ./backend
+
     pull_policy: build
     restart: unless-stopped
+
     environment: *backend-env
+
     depends_on:
-      db:
-        condition: service_healthy
       prestart:
         condition: service_completed_successfully
+
+    ports:
+      - "10.201.0.78:49:49/tcp"
+
     volumes:
       - staging_tacacs_config:/app/tacacs_config
       - staging_tacacs_logs:/var/log/tacacs
-    ports:
-      # Test-only TACACS+, does not occupy production 10.201.0.63:49
-      - "10.201.0.78:4949:49/tcp"
+
+    networks:
+      - staging_internal
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:8000/api/v1/utils/health-check/
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - staging_internal
 
   frontend:
-    image: tacacs-ng-ui-staging-frontend:local
+    image: tacacs-ng-ui-unified-frontend:local
+
     build:
       context: ./frontend
       args:
         VITE_API_URL: ""
         NODE_ENV: production
+
     pull_policy: build
     restart: unless-stopped
+
     depends_on:
       backend:
         condition: service_healthy
+
     ports:
       - "10.201.0.78:8088:80/tcp"
+
     networks:
       - staging_internal
 
